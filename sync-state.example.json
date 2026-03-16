@@ -1,0 +1,51 @@
+{
+  "upstream_repo": "/path/to/indiekit-origin",
+  "workspace": "/path/to/indiekit-dev",
+  "report_dir": "/path/to/indiekit-dev/documentation-central/reports",
+  "forks": {
+    "indiekit-endpoint-auth": {
+      "upstream_package": "endpoint-auth",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-endpoint-files": {
+      "upstream_package": "endpoint-files",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-endpoint-micropub": {
+      "upstream_package": "endpoint-micropub",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-endpoint-posts": {
+      "upstream_package": "endpoint-posts",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-endpoint-share": {
+      "upstream_package": "endpoint-share",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-endpoint-syndicate": {
+      "upstream_package": "endpoint-syndicate",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-endpoint-webmention-io": {
+      "upstream_package": "endpoint-webmention-io",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-frontend": {
+      "upstream_package": "frontend",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-preset-eleventy": {
+      "upstream_package": "preset-eleventy",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-syndicator-bluesky": {
+      "upstream_package": "syndicator-bluesky",
+      "last_synced_tag": "v1.0.0-beta.27"
+    },
+    "indiekit-syndicator-mastodon": {
+      "upstream_package": "syndicator-mastodon",
+      "last_synced_tag": "v1.0.0-beta.27"
+    }
+  }
+}
