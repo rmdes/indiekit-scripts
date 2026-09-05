@@ -193,3 +193,49 @@ gh pr create -R getindiekit/indiekit --head <branch> …   # body: "Fixes #N"
 
 A PR opened from `rmdes/indiekit` never runs upstream's tests (the Localazy secret is
 withheld from fork PRs); one opened from a `getindiekit/indiekit` branch does.
+
+## workspace-state.sh — what is open right now
+
+One screen instead of fifteen tabs: open PRs across every `rmdes/indiekit-*` repo,
+unusable `@indiekit/*` ranges, Renovate/CI coverage, and the upstream items we are
+waiting on or blocking.
+
+```bash
+./workspace-state.sh            # PRs, ranges and upstream
+./workspace-state.sh prs        # one section: prs | ranges | coverage | upstream
+./workspace-state.sh coverage   # Renovate/CI/test matrix (slower, one API call per repo)
+```
+
+Everything is read from GitHub, never from a local clone — a clone can be several
+releases behind its own `main` and will report state you have already fixed. That
+bit us on `syndicator-bluesky`.
+
+Reading the output:
+
+- `UNSTABLE` on a Renovate PR is usually just the `minimumReleaseAge` stability gate,
+  not a failure. Confirm with `gh pr checks <n> --repo rmdes/<repo>`.
+- `head=rmdes` on an upstream PR means it was opened from the fork, so upstream CI
+  never runs the tests. See "Sending a fix upstream" above.
+- CI absent while tests exist is the dangerous row: a dependency PR reporting `CLEAN`
+  there only means *no checks are configured*.
+
+## check-peer-ranges.sh — find `@indiekit/*` ranges that cannot resolve
+
+Upstream publishes only prereleases (`1.0.0-beta.N`), and an npm range does not match a
+prerelease unless the range itself names one. So `"1.x"` can never be satisfied and a
+fresh `npm install` dies with `ETARGET` — which is exactly how
+`@rmdes/indiekit-syndicator-bluesky@1.1.0` shipped broken.
+
+```bash
+./check-peer-ranges.sh                     # every repo, read from GitHub
+./check-peer-ranges.sh --local             # local clones instead
+./check-peer-ranges.sh indiekit-endpoint-cv  # just one
+```
+
+Flags two cases: `BROKEN` (cannot match any published version) and `PINNED` (an exact
+prerelease, so it never picks up newer betas).
+
+**Choose the floor from what the package actually needs.** Most of ours declare
+`>=1.0.0-beta.25`, but several also depend on `@indiekit/util@^1.0.0-beta.29` — that
+floor advertises support for a release the code would break on. Check the package's own
+`@indiekit/*` dependencies before copying a sibling's range.
