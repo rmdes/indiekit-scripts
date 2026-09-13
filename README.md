@@ -9,7 +9,7 @@ Operational scripts for managing an [Indiekit](https://getindiekit.com) developm
 | [`upstream-sync.sh`](#upstream-syncsh) | **Audit** — compare each `@rmdes/*` plugin fork against its upstream `packages/<name>/` counterpart and emit a Markdown sync report. Non-destructive. |
 | [`reset-fork-to-upstream.sh`](#reset-fork-to-upstreamsh) | **Mirror** — hard-reset the full `rmdes/indiekit` fork's `main` branch to match `upstream/main`. Destructive; drops any fork-only commits. |
 | [`fork-sync.sh`](#fork-syncsh) | **Sync** — merge upstream into a cut fork (`@rmdes/indiekit-endpoint-*` etc.) as a real git merge, grafting shared history the first time. Supersedes `upstream-sync.sh`'s tag bookkeeping. |
-| [`fork-verify.sh`](#fork-verifysh) | **Verify** — run upstream's own test suite, eslint and prettier against a fork by overlaying it into `indiekit-origin`, then restore. |
+| [`fork-verify.sh`](#fork-verifysh) | **Verify** — run upstream's own test suite, typecheck (upstream CI gates on it since 2026-09-12), eslint and prettier against a fork by overlaying it into `indiekit-origin`, then restore. |
 | `fork-resolve-conflicts.py`, `fork-resolve-package-json.py` | Helpers for resolving the merge conflicts `fork-sync.sh` leaves behind. |
 
 ## upstream-sync.sh
