@@ -18,7 +18,7 @@ cd "$U"
 export NODE_ENV=test SECRET=test PASSWORD_SECRET=test
 restore(){ git checkout -q -- "packages/$PKG"; git clean -qfd "packages/$PKG"; echo "restored: $(git status --short "packages/$PKG" | wc -l) dirty"; }
 trap restore EXIT
-run(){ node --test --test-reporter=spec packages/$PKG/test/**/*.js packages/$PKG/test/*.js 2>&1 | grep -E '✖|ℹ (tests|pass|fail)'; }
+run(){ shopt -s globstar nullglob; node --test --test-reporter=spec packages/$PKG/test/**/*.js packages/$PKG/test/*.js 2>&1 | grep -E '✖|ℹ (tests|pass|fail)'; }
 if [ "${3:-}" = "baseline" ]; then echo "--- baseline (pristine upstream) ---"; run; fi
 for d in lib views locales assets components layouts scripts styles helpers index.js test; do
   [ -e "$F/$d" ] && { rm -rf "packages/$PKG/$d"; cp -r "$F/$d" "packages/$PKG/"; }
