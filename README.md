@@ -11,6 +11,8 @@ Operational scripts for managing an [Indiekit](https://getindiekit.com) developm
 | [`fork-sync.sh`](#fork-syncsh) | **Sync** — merge upstream into a cut fork (`@rmdes/indiekit-endpoint-*` etc.) as a real git merge, grafting shared history the first time. Supersedes `upstream-sync.sh`'s tag bookkeeping. |
 | [`fork-verify.sh`](#fork-verifysh) | **Verify** — run upstream's own test suite, typecheck (upstream CI gates on it since 2026-09-12), eslint and prettier against a fork by overlaying it into `indiekit-origin`, then restore. |
 | `fork-resolve-conflicts.py`, `fork-resolve-package-json.py` | Helpers for resolving the merge conflicts `fork-sync.sh` leaves behind. |
+| `publish-all.sh` | **Publish** — find every `@rmdes/*` package whose version is not on npm, create its npm trusted-publisher config, and push a `v<version>` tag so its GitHub Actions `publish.yml` publishes via OIDC (no token, automatic provenance). Waits for the registry and links failed CI runs. |
+| `setup-trusted-publishing.sh` | **One-time / on template change** — install `templates/publish.yml` into every `@rmdes/*` repo and fix `repository.url` to match the GitHub origin (required by trusted publishing). Commits; `--push` to push. |
 
 ## upstream-sync.sh
 
