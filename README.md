@@ -21,7 +21,8 @@ Every published `@rmdes/*` package is released by its own GitHub Actions workflo
 ```bash
 # release: bump version, commit, push in the plugin repo, then
 ./publish-all.sh --dry-run     # plan
-./publish-all.sh               # trust configs (one passkey approval) → v<version> tags → wait for registry
+./publish-all.sh               # v<version> tags → CI publishes → wait for registry
+                               # (passkey only on a package's FIRST CI release, to create its trust config)
 ./publish-all.sh indiekit-endpoint-posts indiekit-frontend   # only these repos
 
 # new plugin repo (after its first, manual npm publish)

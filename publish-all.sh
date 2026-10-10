@@ -12,11 +12,13 @@
 #   1. PREFLIGHT  — npm credential (only needed to create trust configs) and gh.
 #   2. PLAN       — ask the registry what exists, refuse dirty/unpushed trees and
 #                   repos without publish.yml. Prints the plan before anything ships.
-#   3. TRUST      — `npm trust github` for each package being published. One
-#                   passkey approval; tick "skip 2FA for 5 minutes" and the rest
-#                   go through. Done here, not in setup, because a new trust
-#                   config expires if it does not see a publish within 2 days.
-#                   An existing config makes this a harmless "already exists".
+#   3. TRUST      — `npm trust github`, ONLY for packages with no version yet
+#                   published via trusted publishing (the registry records that
+#                   in _npmUser.trustedPublisher, and a validated config never
+#                   expires). So a package costs one passkey approval on its first
+#                   CI release and none after; several first-timers share one
+#                   approval if you tick "skip 2FA for 5 minutes". Done here, not
+#                   in setup, because a new config expires unused after 2 days.
 #   4. TAG        — push v<version>; the tag push triggers the workflow. If the
 #                   tag is already on the remote at HEAD, re-dispatch instead.
 #   5. DIST-TAGS  — --repair-tags only: `npm dist-tag add latest`, run LOCALLY
@@ -116,6 +118,8 @@ fi
 
 # ─── Phase 2: plan ───
 plan=()          # pkg|version|repo|slug|mode   (mode: publish | tag-only)
+needs_trust=()   # packages never yet published via trusted publishing
+needs_trust_for() { [[ " ${needs_trust[*]} " == *" $1 "* ]]; }
 skipped=0
 
 for repo in "${repos[@]}"; do
@@ -141,10 +145,14 @@ for repo in "${repos[@]}"; do
     skipped=$((skipped + 1)); continue
   fi
 
-  read -r exists cur_latest cur_beta < <(
+  # trusted: some version was already published via trusted publishing, so the
+  # config exists and is validated (validated configs don't expire) — the trust
+  # step, and its passkey prompt, can be skipped for this package.
+  read -r exists cur_latest cur_beta trusted < <(
     printf '%s' "$json" | node -p '
       const d=JSON.parse(require("fs").readFileSync(0,"utf8"));
-      [!!d.versions[process.argv[1]], d["dist-tags"].latest||"-", d["dist-tags"].beta||"-"].join(" ")
+      const t=Object.values(d.versions).some(v=>v._npmUser?.trustedPublisher);
+      [!!d.versions[process.argv[1]], d["dist-tags"].latest||"-", d["dist-tags"].beta||"-", t].join(" ")
     ' "$version" 2>/dev/null
   ) || { printf '%s✗ %-42s could not parse registry response%s\n' "$bad" "$pkg" "$off"; skipped=$((skipped+1)); continue; }
 
@@ -190,6 +198,7 @@ for repo in "${repos[@]}"; do
   fi
 
   plan+=("$pkg|$version|$repo|$(origin_slug "$repo")|publish")
+  [ "$trusted" = true ] || needs_trust+=("$pkg")
 done
 
 echo
@@ -205,7 +214,8 @@ for entry in "${plan[@]}"; do
   if [ "$mode" = tag-only ]; then
     printf '  %-42s %s — move latest only (version is on npm)\n' "$pkg" "$version"; n_tag=$((n_tag + 1))
   else
-    printf '  %-42s v%s → CI in %s\n' "$pkg" "$version" "$slug"; n_pub=$((n_pub + 1))
+    note=""; needs_trust_for "$pkg" && note=" ${warn}(first CI publish — passkey once)${off}"
+    printf '  %-42s v%s → CI in %s%b\n' "$pkg" "$version" "$slug" "$note"; n_pub=$((n_pub + 1))
   fi
 done
 echo
@@ -219,11 +229,13 @@ fi
 untrusted=()
 is_untrusted() { [[ " ${untrusted[*]} " == *" $1 "* ]]; }
 trust_err=$(mktemp); trap 'rm -f "$trust_err"' EXIT
-if [ "$n_pub" -gt 0 ]; then
-  printf '%s── trusted publisher configs (approve once, tick "skip for 5 minutes") ──%s\n' "$dim" "$off"
+if [ "${#needs_trust[@]}" -gt 0 ]; then
+  printf '%s── trusted publisher configs for %d first-time package(s) (approve once, tick "skip for 5 minutes") ──%s\n' \
+    "$dim" "${#needs_trust[@]}" "$off"
   for entry in "${plan[@]}"; do
     IFS='|' read -r pkg version repo slug mode <<<"$entry"
     [ "$mode" = publish ] || continue
+    needs_trust_for "$pkg" || continue
     # stdin/stdout must stay on the terminal: npm only offers the browser
     # (passkey) flow when they are a TTY, and fails with EOTP when captured —
     # which is how the first real run (frontend beta.56, 2026-10-10) reached CI
