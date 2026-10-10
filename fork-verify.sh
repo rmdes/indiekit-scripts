@@ -41,5 +41,5 @@ echo "--- typecheck ---"; npm run typecheck 2>&1 | grep "^packages/$PKG/" > /tmp
 if [ -s /tmp/fork-verify-tsc.$$ ]; then echo "$(wc -l < /tmp/fork-verify-tsc.$$) errors"; head -20 /tmp/fork-verify-tsc.$$; else echo ok; fi
 rm -f /tmp/fork-verify-tsc.$$
 echo "--- eslint ---"; npx eslint "packages/$PKG" --ignore-pattern '**/test/**' >/dev/null && echo ok \
-  || npx eslint "packages/$PKG" --ignore-pattern '**/test/**' 2>&1 | grep -E 'error|warning' | head -20
+  || npx eslint "packages/$PKG" --ignore-pattern '**/test/**' --quiet 2>&1 | head -20
 echo "--- prettier ---"; npx prettier --check "packages/$PKG/**/*.{js,json}" 2>&1 | tail -1
