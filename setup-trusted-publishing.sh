@@ -39,10 +39,11 @@ if [ "${#named[@]}" -gt 0 ]; then repos=("${named[@]}"); else repos=(*/); repos=
 
 for repo in "${repos[@]}"; do
   [ -f "$repo/package.json" ] && [ -e "$repo/.git" ] || continue
-  read -r pkg version private cur_url < <(node -p "
-    const p=require('./$repo/package.json'), r=p.repository;
-    [p.name||'-', p.version||'-', p.private?'private':'public', (typeof r==='string'?r:r?.url)||'-'].join(' ')
-  " 2>/dev/null) || continue
+  # path passed as argv, never spliced into the JS source
+  read -r pkg version private cur_url < <(node -p '
+    const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")), r=p.repository;
+    [p.name||"-", p.version||"-", p.private?"private":"public", (typeof r==="string"?r:r?.url)||"-"].join(" ")
+  ' "$repo/package.json" 2>/dev/null) || continue
   case "$pkg" in @rmdes/*) ;; *) continue ;; esac
   [ "$private" = public ] || continue
   if ! curl -sfo /dev/null --max-time 20 "https://registry.npmjs.org/${pkg//\//%2F}"; then

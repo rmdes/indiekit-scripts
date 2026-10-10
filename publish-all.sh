@@ -67,7 +67,7 @@ registry_json() {
   curl -sf --max-time 20 "https://registry.npmjs.org/${1//\//%2F}" 2>/dev/null
 }
 registry_has() {   # pkg version -> "true"/"false"
-  registry_json "$1" | node -p "try{!!JSON.parse(require('fs').readFileSync(0,'utf8')).versions['$2']}catch(e){false}" 2>/dev/null
+  registry_json "$1" | node -p 'try{!!JSON.parse(require("fs").readFileSync(0,"utf8")).versions[process.argv[1]]}catch(e){false}' "$2" 2>/dev/null
 }
 origin_slug() {    # repo dir -> owner/repo
   git -C "$1" remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##'
@@ -105,10 +105,10 @@ for dir in */; do
   [ -f "$repo/package.json" ] || continue
 
   read -r pkg version private < <(
-    node -p "
-      const p=require('./$repo/package.json');
-      [p.name||'-', p.version||'-', p.private?'private':'public'].join(' ')
-    " 2>/dev/null
+    node -p '
+      const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+      [p.name||"-", p.version||"-", p.private?"private":"public"].join(" ")
+    ' "$repo/package.json" 2>/dev/null
   ) || continue
 
   case "$pkg" in @rmdes/*) ;; *) continue ;; esac
@@ -125,10 +125,10 @@ for dir in */; do
   fi
 
   read -r exists cur_latest cur_beta < <(
-    printf '%s' "$json" | node -p "
-      const d=JSON.parse(require('fs').readFileSync(0,'utf8'));
-      [!!d.versions['$version'], d['dist-tags'].latest||'-', d['dist-tags'].beta||'-'].join(' ')
-    " 2>/dev/null
+    printf '%s' "$json" | node -p '
+      const d=JSON.parse(require("fs").readFileSync(0,"utf8"));
+      [!!d.versions[process.argv[1]], d["dist-tags"].latest||"-", d["dist-tags"].beta||"-"].join(" ")
+    ' "$version" 2>/dev/null
   ) || { printf '%s✗ %-42s could not parse registry response%s\n' "$bad" "$pkg" "$off"; skipped=$((skipped+1)); continue; }
 
   # Already on npm — but a dist-tag move can fail separately from its publish
