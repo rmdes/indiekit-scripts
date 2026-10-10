@@ -13,27 +13,44 @@
 #
 # Phases 4 and 5 are separate from 3 on purpose; see AUTH and VERIFY below.
 #
-# ─── AUTH: why this script forces --auth-type=legacy ───
+# ─── AUTH: why a 10-package round costs 15 browser round-trips ───
 #
-# npm 11 defaults to `auth-type=web`: each operation needing 2FA prints
-#   Authenticate your account at: https://www.npmjs.com/auth/cli/<uuid>
-#   Press ENTER to open in the browser...
-# and then polls `/-/v1/done?authId=…` until you approve it. That session has a
-# ~5 minute TTL. On 2026-10-10 a 10-package round meant 15 browser round-trips
-# (10 publishes + 5 dist-tag moves); five of them timed out, each failing with
-#   npm error code E404 ... Not Found - GET /-/v1/done?authId=***
-# at almost exactly 5-minute intervals. Net result: 6 of 10 published, 4 lost,
-# 2 dist-tags left behind, and ~25 minutes spent.
+# This account authenticates with a PASSKEY (WebAuthn, held in Bitwarden). There
+# is no TOTP authenticator on it. That constrains the options:
 #
-# `--auth-type=legacy` asks for the 6-digit code on the terminal instead. No
-# browser, no session to expire, seconds per package.
+#   --auth-type=web     (THE DEFAULT, and the only one that works here) npm prints
+#                       Authenticate your account at: https://www.npmjs.com/auth/cli/<uuid>
+#                       and polls /-/v1/done?authId=… until the browser flow
+#                       completes. Session TTL is ~5 minutes.
+#   --auth-type=legacy  Prompts for a 6-digit code at the terminal. USELESS on a
+#                       passkey-only account — there is no code to type. Do not
+#                       set it here hoping for speed; an earlier revision of this
+#                       script defaulted to it and would simply have blocked
+#                       every publish.
 #
-# FASTEST OPTION — no prompts at all: create a granular access token on npmjs.com
-# with publish rights to @rmdes and "bypass 2FA for automation", then
-#   export NPM_TOKEN=npm_xxx
-#   npm config set //registry.npmjs.org/:_authToken '${NPM_TOKEN}'
-# A token on disk can publish without you, so that is a deliberate trade, not a
-# default this script makes for you.
+# So the cost is one browser approval per operation, and operations are what to
+# reduce. On 2026-10-10 a ten-package round needed FIFTEEN: ten publishes plus
+# five `dist-tag add latest` moves. Five sessions expired mid-round, each failing
+# with E404 on /-/v1/done?authId=… at almost exactly 5-minute intervals, and the
+# round took ~25 minutes for 6 of 10 landed.
+#
+# Two ways to cut the round-trips:
+#
+#   1. --latest-never  halves them when `latest` does not matter. It usually does
+#      not: indiekit-cloudron pins forked defaults to an EXACT version in
+#      package.json overrides, and the plugin registry pins the rest to an
+#      explicit range. Neither reads dist-tags. `latest` only affects a bare
+#      `npm install @rmdes/...`. Five fewer approvals, and the tags can be
+#      repaired later in one pass with --repair-tags.
+#
+#   2. A GRANULAR ACCESS TOKEN — zero approvals, the real fix. On npmjs.com:
+#      Access Tokens -> Generate New Token -> Granular, scope it to @rmdes with
+#      Read and write, and set "Bypass 2FA for automation" (that setting is what
+#      makes it skip the passkey flow). Then:
+#        npm config set //registry.npmjs.org/:_authToken npm_xxxxx
+#      Keep the token in Bitwarden alongside the passkey. The trade is real: a
+#      publish-capable credential then sits in ~/.npmrc, so anything running as
+#      you can publish. That is why this script does not create one for you.
 #
 # ─── VERIFY: why it is one sweep at the end, not a poll per package ───
 #
@@ -50,8 +67,11 @@
 #
 # Usage:
 #   publish-all.sh [dir] [--dry-run] [--latest-always|--latest-never]
-#                        [--skip-auth-check] [--auth-type=web|legacy]
-#                        [--otp=123456]
+#                        [--skip-auth-check] [--repair-tags]
+#                        [--auth-type=web|legacy] [--otp=123456]
+#
+# --auth-type defaults to web; legacy needs a TOTP code this account does not
+# have. --otp= is only useful on a TOTP account.
 #
 # Already-published versions are skipped, so re-running after a failure retries
 # only what is missing. That is the supported recovery path — just run it again.
@@ -68,7 +88,7 @@
 #   not. Do not re-hardcode it; read `npm view <pkg> dist-tags.latest`.
 set -uo pipefail
 
-root=.; dry=0; latest_mode=auto; auth_check=1; auth_type=legacy; otp=""; repair_tags=0
+root=.; dry=0; latest_mode=auto; auth_check=1; auth_type=web; otp=""; repair_tags=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run)          dry=1 ;;
