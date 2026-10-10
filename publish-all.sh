@@ -2,6 +2,14 @@
 # Publish every @rmdes/* package whose local version is not yet on npm.
 # Discovery is a glob — there is no list to maintain.
 #
+# What it does, in order:
+#   1. PREFLIGHT: confirm npm still has a valid credential, and stop if not.
+#   2. For each @rmdes/* package found, ask the registry whether the local
+#      version already exists; skip it if so.
+#   3. Refuse any package with uncommitted tracked changes.
+#   4. Publish, choosing the dist-tag from the package's own history (below).
+#   5. Poll the registry until the new version is actually visible.
+#
 # Tagging rules (derived from each package's own history, not hardcoded):
 #   stable version (1.2.3)        -> npm publish
 #   prerelease   (1.0.0-beta.37)  -> npm publish --tag beta
@@ -17,17 +25,28 @@
 #
 # Usage:
 #   publish-all.sh [dir] [--dry-run] [--latest-always|--latest-never]
+#                        [--skip-auth-check]
 #
 # Each npm publish prompts for its own OTP. Already-published versions are
 # skipped, so re-running after a failure only retries what is missing.
+#
+# The auth preflight exists because an expired or revoked token fails LATE: the
+# version comparison and the dirty-tree check both pass, the plan prints, and
+# only the first actual `npm publish` errors — after which you are part-way
+# through a multi-package release with no idea which half landed. `npm whoami`
+# costs one request and turns that into a refusal before anything ships.
+# `--dry-run` only warns (planning does not need credentials);
+# `--skip-auth-check` is the escape hatch for a registry where whoami is
+# unavailable but publishing works.
 set -uo pipefail
 
-root=.; dry=0; latest_mode=auto
+root=.; dry=0; latest_mode=auto; auth_check=1
 for arg in "$@"; do
   case "$arg" in
-    --dry-run)       dry=1 ;;
-    --latest-always) latest_mode=always ;;
-    --latest-never)  latest_mode=never ;;
+    --dry-run)         dry=1 ;;
+    --latest-always)   latest_mode=always ;;
+    --latest-never)    latest_mode=never ;;
+    --skip-auth-check) auth_check=0 ;;
     -*)              echo "unknown flag: $arg" >&2; exit 2 ;;
     *)               root=$arg ;;
   esac
@@ -39,6 +58,35 @@ if [ -t 1 ]; then
 else
   ok=; warn=; bad=; dim=; off=
 fi
+
+# ─── Preflight: is the npm credential still valid? ───
+#
+# `npm whoami` resolves the token in .npmrc against the registry: it is the
+# cheapest proof that a publish will not fail on auth. It proves IDENTITY, not
+# publish rights on a given package — a token can be valid and still lack access
+# to the @rmdes scope — so per-package publish failures are still handled below.
+# This only catches the common case: the token expired or was revoked.
+npm_registry=${NPM_REGISTRY:-https://registry.npmjs.org/}
+
+if [ "$auth_check" = 1 ]; then
+  if whoami_out=$(npm whoami --registry="$npm_registry" 2>&1); then
+    printf '%s✓ npm: authenticated as %s%s %s(%s)%s\n' \
+      "$ok" "$whoami_out" "$off" "$dim" "$npm_registry" "$off"
+  else
+    printf '%s✗ npm: no valid credential for %s%s\n' "$bad" "$npm_registry" "$off"
+    printf '%s  %s%s\n' "$dim" "$(printf '%s' "$whoami_out" | head -1)" "$off"
+    if [ "$dry" = 1 ]; then
+      printf '%s  continuing anyway — --dry-run publishes nothing%s\n' "$warn" "$off"
+    else
+      printf '  Run %snpm login%s first, then re-run this script.\n' "$ok" "$off"
+      printf '  (Or pass --skip-auth-check if whoami is unavailable on this registry.)\n'
+      exit 1
+    fi
+  fi
+else
+  printf '%s- npm: auth check skipped (--skip-auth-check)%s\n' "$dim" "$off"
+fi
+echo
 
 published=0 skipped=0 failed=0 planned=0
 
