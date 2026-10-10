@@ -11,6 +11,29 @@ Operational scripts for managing an [Indiekit](https://getindiekit.com) developm
 | [`fork-sync.sh`](#fork-syncsh) | **Sync** — merge upstream into a cut fork (`@rmdes/indiekit-endpoint-*` etc.) as a real git merge, grafting shared history the first time. Supersedes `upstream-sync.sh`'s tag bookkeeping. |
 | [`fork-verify.sh`](#fork-verifysh) | **Verify** — run upstream's own test suite, typecheck (upstream CI gates on it since 2026-09-12), eslint and prettier against a fork by overlaying it into `indiekit-origin`, then restore. |
 | `fork-resolve-conflicts.py`, `fork-resolve-package-json.py` | Helpers for resolving the merge conflicts `fork-sync.sh` leaves behind. |
+| `publish-all.sh` | **Publish** — find every `@rmdes/*` package whose version is not on npm, create its npm trusted-publisher config, and push a `v<version>` tag so its GitHub Actions `publish.yml` publishes via OIDC (no token, automatic provenance). Waits for the registry and links failed CI runs. |
+| `setup-trusted-publishing.sh` | **One-time / on template change** — install `templates/publish.yml` into published, non-alpha `@rmdes/*` repos (or the ones named) and fix `repository.url` to match the GitHub origin (required by trusted publishing). Commits; `--push` to push. |
+
+## Publishing to npm (trusted publishing)
+
+Every published `@rmdes/*` package is released by its own GitHub Actions workflow (`.github/workflows/publish.yml`, copied from [`templates/publish.yml`](templates/publish.yml)) using [npm trusted publishing](https://docs.npmjs.com/trusted-publishers): OIDC instead of a token, provenance attached automatically. Nothing is published from this machine.
+
+```bash
+# release: bump version, commit, push in the plugin repo, then
+./publish-all.sh --dry-run     # plan
+./publish-all.sh               # v<version> tags → CI publishes → wait for registry
+                               # (passkey only on a package's FIRST CI release, to create its trust config)
+./publish-all.sh indiekit-endpoint-posts indiekit-frontend   # only these repos
+
+# new plugin repo (after its first, manual npm publish)
+./setup-trusted-publishing.sh --push <repo>
+```
+
+`publish-all.sh` only plans packages whose version is missing on npm, whose tree is clean and pushed, and which have `publish.yml` committed. It creates the npm trust config just in time (a new one expires if unused for 2 days), pushes the tags, then polls the registry and prints the CI run URL for anything that did not land. Re-run to retry. `--repair-tags` moves a stuck `latest` locally.
+
+Dist-tags are decided in the workflow: stable → `latest`; prerelease → `beta`, or `latest` when the current `latest` is already a prerelease.
+
+Requires local npm ≥ 11.15 (`npm trust`); CI installs npm ≥ 11.21 itself. Full guide, troubleshooting and hardening: `documentation-central/docs/2026-10-10-npm-trusted-publishing.md` in the workspace.
 
 ## upstream-sync.sh
 
