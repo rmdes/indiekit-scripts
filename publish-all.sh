@@ -83,6 +83,10 @@ registry_json() {
 registry_has() {   # pkg version -> "true"/"false"
   registry_json "$1" | node -p 'try{!!JSON.parse(require("fs").readFileSync(0,"utf8")).versions[process.argv[1]]}catch(e){false}' "$2" 2>/dev/null
 }
+run_for_tag() {    # slug tag jq -> field of the newest publish.yml run for that tag
+  gh run list --repo "$1" --workflow publish.yml --branch "$2" --limit 1 \
+    --json status,conclusion,url -q "$3" 2>/dev/null
+}
 origin_slug() {    # repo dir -> owner/repo
   git -C "$1" remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##'
 }
@@ -212,17 +216,29 @@ if [ "$dry" = 1 ]; then
 fi
 
 # ─── Phase 3: trust configs ───
+untrusted=()
+is_untrusted() { [[ " ${untrusted[*]} " == *" $1 "* ]]; }
+trust_err=$(mktemp); trap 'rm -f "$trust_err"' EXIT
 if [ "$n_pub" -gt 0 ]; then
   printf '%s── trusted publisher configs (approve once, tick "skip for 5 minutes") ──%s\n' "$dim" "$off"
   for entry in "${plan[@]}"; do
     IFS='|' read -r pkg version repo slug mode <<<"$entry"
     [ "$mode" = publish ] || continue
-    if out=$(npm trust github "$pkg" --file publish.yml --repo "$slug" --allow-publish --yes 2>&1); then
+    # stdin/stdout must stay on the terminal: npm only offers the browser
+    # (passkey) flow when they are a TTY, and fails with EOTP when captured —
+    # which is how the first real run (frontend beta.56, 2026-10-10) reached CI
+    # with no trust config and got E404. Only stderr is copied, to spot
+    # "already exists".
+    npm trust github "$pkg" --file publish.yml --repo "$slug" --allow-publish --yes 2> >(tee "$trust_err" >&2)
+    rc=$?; wait $! 2>/dev/null   # let tee finish writing before grepping its file
+    if [ "$rc" = 0 ]; then
       printf '%s✓ %-42s trusts %s publish.yml%s\n' "$ok" "$pkg" "$slug" "$off"
-    elif printf '%s' "$out" | grep -qiE 'already|exist|409|conflict'; then
+    elif grep -qiE 'already|exist|409|conflict' "$trust_err"; then
       printf '%s  %-42s already configured%s\n' "$dim" "$pkg" "$off"
     else
-      printf '%s! %-42s npm trust failed — CI will tell: %s%s\n' "$warn" "$pkg" "$(printf '%s' "$out" | grep -m1 'npm error')" "$off"
+      # No trust = a guaranteed E404 in CI; keep the tag for a re-run instead.
+      printf '%s✗ %-42s npm trust failed — not tagging it, re-run to retry%s\n' "$bad" "$pkg" "$off"
+      untrusted+=("$pkg")
     fi
     sleep 2   # npm's own advice for bulk trust calls: avoid rate limiting
   done
@@ -233,6 +249,7 @@ fi
 for entry in "${plan[@]}"; do
   IFS='|' read -r pkg version repo slug mode <<<"$entry"
   [ "$mode" = publish ] || continue
+  is_untrusted "$pkg" && continue
   t="v$version"; head=$(git -C "$repo" rev-parse HEAD)
   # For an annotated tag ls-remote prints the peeled `^{}` line last: the commit.
   remote_sha=$(git -C "$repo" ls-remote origin "refs/tags/$t" "refs/tags/$t^{}" | awk 'END{print $1}')
@@ -267,15 +284,21 @@ fi
 if [ "$n_pub" -gt 0 ]; then
   printf '\n%s── waiting for the registry (up to %ss) ──%s\n' "$dim" "$timeout" "$off"
   deadline=$((SECONDS + timeout))
-  while :; do
+  # Sleep FIRST: right after a re-dispatch the newest run for the tag is still
+  # the old failed one, which would end the wait before the new run registers.
+  while sleep 20; do
     missing=0
     for entry in "${plan[@]}"; do
-      IFS='|' read -r pkg version _ _ mode <<<"$entry"
-      [ "$mode" = publish ] && [ "$(registry_has "$pkg" "$version")" != true ] && missing=$((missing + 1))
+      IFS='|' read -r pkg version _ slug mode <<<"$entry"
+      [ "$mode" = publish ] || continue
+      is_untrusted "$pkg" && continue
+      [ "$(registry_has "$pkg" "$version")" = true ] && continue
+      # Its CI run for this tag already failed: nothing more is coming.
+      [ "$(run_for_tag "$slug" "v$version" '.[0].conclusion')" = failure ] && continue
+      missing=$((missing + 1))
     done
     if [ "$missing" -eq 0 ] || [ "$SECONDS" -ge "$deadline" ]; then break; fi
     printf '%s  %d pending…%s\n' "$dim" "$missing" "$off"
-    sleep 20
   done
 fi
 
@@ -289,11 +312,13 @@ for entry in "${plan[@]}"; do
     else
       printf '%s✗ %-42s latest still %s%s\n' "$bad" "$pkg" "$cur" "$off"; tags_wrong=$((tags_wrong + 1))
     fi
+  elif is_untrusted "$pkg"; then
+    printf '%s✗ %-42s %s not tagged — npm trust failed%s\n' "$bad" "$pkg" "$version" "$off"
+    failed=$((failed + 1))
   elif [ "$(registry_has "$pkg" "$version")" = true ]; then
     printf '%s✓ %-42s %s live%s\n' "$ok" "$pkg" "$version" "$off"; published=$((published + 1))
   else
-    run=$(gh run list --repo "$slug" --workflow publish.yml --limit 1 --json status,conclusion,url \
-      -q '.[0] | "\(.status)/\(.conclusion) \(.url)"' 2>/dev/null)
+    run=$(run_for_tag "$slug" "v$version" '.[0] | "\(.status)/\(.conclusion) \(.url)"')
     printf '%s✗ %-42s %s NOT on npm%s %s\n' "$bad" "$pkg" "$version" "$off" "${run:-(no CI run found)}"
     failed=$((failed + 1))
   fi
