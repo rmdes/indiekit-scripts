@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Install templates/publish.yml into every @rmdes/* repo and make package.json
-# fit for npm trusted publishing. Idempotent: re-run after editing the template.
+# Install templates/publish.yml into @rmdes/* repos and make package.json fit
+# for npm trusted publishing. Idempotent: re-run after editing the template.
+#
+# Which repos: the ones named on the command line, or else every @rmdes/* repo
+# that is ALREADY ON NPM and NOT an alpha. Unpublished plugins (bluesky-pds,
+# atproto-utils) are never touched — trusted publishing can't be configured for
+# a package that doesn't exist yet. Alphas (endpoint-donation) only when named.
 #
 # Per repo:
 #   - copy templates/publish.yml -> .github/workflows/publish.yml (if different)
@@ -12,31 +17,40 @@
 # It does NOT create the trust config on npmjs.com: a config must see its first
 # publish within 2 days or it expires, so publish-all.sh creates it just in time.
 #
-# Usage: setup-trusted-publishing.sh [dir] [--dry-run] [--push]
+# Usage: setup-trusted-publishing.sh [--dry-run] [--push] [--root=DIR] [repo...]
+#   --root defaults to the workspace this script sits in (indiekit-dev/).
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 template=$here/templates/publish.yml
-root=.; dry=0; push=0
+root=$here/..; dry=0; push=0; named=()
 for arg in "$@"; do
   case "$arg" in
     --dry-run) dry=1 ;;
     --push)    push=1 ;;
+    --root=*)  root=${arg#*=} ;;
     -*)        echo "unknown flag: $arg" >&2; exit 2 ;;
-    *)         root=$arg ;;
+    *)         named+=("${arg%/}") ;;
   esac
 done
 cd "$root" || exit 1
 
-for dir in */; do
-  repo=${dir%/}
+if [ "${#named[@]}" -gt 0 ]; then repos=("${named[@]}"); else repos=(*/); repos=("${repos[@]%/}"); fi
+
+for repo in "${repos[@]}"; do
   [ -f "$repo/package.json" ] && [ -e "$repo/.git" ] || continue
-  read -r pkg private cur_url < <(node -p "
+  read -r pkg version private cur_url < <(node -p "
     const p=require('./$repo/package.json'), r=p.repository;
-    [p.name||'-', p.private?'private':'public', (typeof r==='string'?r:r?.url)||'-'].join(' ')
+    [p.name||'-', p.version||'-', p.private?'private':'public', (typeof r==='string'?r:r?.url)||'-'].join(' ')
   " 2>/dev/null) || continue
   case "$pkg" in @rmdes/*) ;; *) continue ;; esac
   [ "$private" = public ] || continue
+  if ! curl -sfo /dev/null --max-time 20 "https://registry.npmjs.org/${pkg//\//%2F}"; then
+    printf '  %-42s not on npm, skipped\n' "$pkg"; continue
+  fi
+  if [ "${#named[@]}" -eq 0 ] && [[ $version == *-alpha* ]]; then
+    printf '  %-42s alpha (%s), skipped — name it to include\n' "$pkg" "$version"; continue
+  fi
 
   # git@github.com:owner/repo.git | https://github.com/owner/repo(.git) -> owner/repo
   slug=$(git -C "$repo" remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
