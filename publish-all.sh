@@ -32,7 +32,12 @@
 # (as of 2026-10-10: auth, micropub, syndicate, frontend, preset-eleventy).
 #
 # Usage:
-#   publish-all.sh [dir] [--dry-run] [--skip-auth-check] [--repair-tags] [--timeout=900]
+#   publish-all.sh [repo...] [--dry-run] [--skip-auth-check] [--repair-tags]
+#                  [--timeout=900] [--root=DIR]
+#
+# repo...  only consider these repos (e.g. indiekit-endpoint-posts); default all.
+# --root   the workspace holding the repos; default the one this script sits in.
+#          (A positional DIR without a package.json is still taken as --root.)
 #
 # Already-published versions are skipped, so re-running after a failure retries
 # only what is missing. A package still missing is listed with its CI run URL.
@@ -41,18 +46,27 @@
 # `npm trust revoke <pkg> --id=<id>`, then re-run.
 set -uo pipefail
 
-root=.; dry=0; auth_check=1; repair_tags=0; timeout=900
+root=$(cd "$(dirname "$0")/.." && pwd); dry=0; auth_check=1; repair_tags=0; timeout=900; named=()
 for arg in "$@"; do
   case "$arg" in
     --dry-run)          dry=1 ;;
     --skip-auth-check)  auth_check=0 ;;
     --repair-tags)      repair_tags=1 ;;
     --timeout=*)        timeout=${arg#*=} ;;
+    --root=*)           root=${arg#*=} ;;
     -*)                 echo "unknown flag: $arg" >&2; exit 2 ;;
-    *)                  root=$arg ;;
+    *)  if [ -d "$arg" ] && [ ! -f "$arg/package.json" ]; then root=$arg; else named+=("${arg%/}"); fi ;;
   esac
 done
 cd "$root" || exit 1
+if [ "${#named[@]}" -gt 0 ]; then
+  for repo in "${named[@]}"; do
+    [ -f "$repo/package.json" ] || { echo "no such repo in $PWD: $repo" >&2; exit 2; }
+  done
+  repos=("${named[@]}")
+else
+  repos=(*/); repos=("${repos[@]%/}")
+fi
 
 if [ -t 1 ]; then
   ok=$'\e[32m'; warn=$'\e[33m'; bad=$'\e[31m'; dim=$'\e[2m'; off=$'\e[0m'
@@ -100,8 +114,7 @@ fi
 plan=()          # pkg|version|repo|slug|mode   (mode: publish | tag-only)
 skipped=0
 
-for dir in */; do
-  repo=${dir%/}
+for repo in "${repos[@]}"; do
   [ -f "$repo/package.json" ] || continue
 
   read -r pkg version private < <(
