@@ -7,8 +7,13 @@
 #   prerelease   (1.0.0-beta.37)  -> npm publish --tag beta
 #                                    ...then, IF that package's current `latest`
 #                                    is itself a prerelease, also move `latest`.
-#   That last rule preserves each package's existing convention: auth/micropub
-#   keep latest on their betas; syndicate/frontend/preset keep latest on stable.
+#   That last rule preserves each package's existing convention rather than
+#   imposing one. It is derived from the registry at run time on purpose: as of
+#   2026-10-10 auth, micropub, syndicate, frontend AND preset-eleventy all have
+#   `latest` sitting on a prerelease, so all five move it. An earlier version of
+#   this comment asserted syndicate/frontend/preset kept latest on stable — that
+#   was true once and silently stopped being true. Do not re-hardcode it; read
+#   `npm view <pkg> dist-tags.latest` if you want to know what will happen.
 #
 # Usage:
 #   publish-all.sh [dir] [--dry-run] [--latest-always|--latest-never]
