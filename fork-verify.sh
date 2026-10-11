@@ -17,6 +17,15 @@
 #   Run ONE AT A TIME. Every invocation overlays the same indiekit-origin tree,
 #   so two concurrent runs corrupt each other's package and each other's restore.
 #
+#   Env: FV_FULL=1 full reporter output (needed to see WHY a test failed)
+#        FV_EXCLUDE=<regex> skip matching test files
+#        FV_TIMEOUT=<ms> per-test timeout (default 120000)
+#        FV_WALL=<s> wall clock for the whole run (default 300)
+#
+#   syndicator-bluesky needs FV_EXCLUDE='test/index\.js$': that file's before()
+#   hook calls TestNetworkNoAppView.create(), which never resolves here, and a
+#   hanging hook is not bounded by --test-timeout.
+#
 # Env: WORKSPACE (default ~/indiekit), UPSTREAM (default $WORKSPACE/indiekit-origin)
 set -uo pipefail
 WORKSPACE=${WORKSPACE:-$HOME/indiekit}
@@ -62,9 +71,40 @@ restore(){
 trap restore EXIT
 # FV_FULL=1 keeps the whole reporter output — needed to see WHY a test failed,
 # since the summary grep throws the assertion diff away.
+#
+# Two things here are load-bearing:
+#  - Bail out when the globs match nothing. `node --test` with no path argument
+#    falls back to discovering the WHOLE monorepo, so a package without tests
+#    (post-type-page) silently ran every other package's suite instead.
+#  - `--test-timeout`. Upstream runs with no timeout, and
+#    syndicator-bluesky/test/index.js hangs forever on
+#    `TestNetworkNoAppView.create()` (it wants a Postgres that nothing starts),
+#    so a run would burn its entire budget and report nothing at all.
+#    FV_TIMEOUT overrides; 120000ms is well clear of a slow integration test.
 run(){ shopt -s globstar nullglob
-  if [ -n "${FV_FULL:-}" ]; then node --test --test-reporter=spec packages/$PKG/test/**/*.js packages/$PKG/test/*.js 2>&1
-  else node --test --test-reporter=spec packages/$PKG/test/**/*.js packages/$PKG/test/*.js 2>&1 | grep -E '✖|ℹ (tests|pass|fail)'; fi; }
+  local all=(packages/$PKG/test/**/*.js packages/$PKG/test/*.js) files=() f
+  for f in "${all[@]}"; do
+    if [ -n "${FV_EXCLUDE:-}" ] && [[ "$f" =~ $FV_EXCLUDE ]]; then echo "(excluded: $f)"; continue; fi
+    files+=("$f")
+  done
+  if [ ${#files[@]} -eq 0 ]; then echo "(no test files to run in packages/$PKG/test)"; return 0; fi
+
+  # --test-timeout bounds a TEST; it does not bound a hanging before() hook, so
+  # the wall clock is the real safety net. Without it a hang reports nothing at
+  # all — no summary, no failure — and looks identical to a package that has no
+  # tests. FV_WALL overrides.
+  local wall="${FV_WALL:-300}" rc=0
+  if [ -n "${FV_FULL:-}" ]; then
+    timeout "$wall" node --test --test-reporter=spec --test-timeout="${FV_TIMEOUT:-120000}" "${files[@]}" 2>&1
+    rc=$?
+  else
+    timeout "$wall" node --test --test-reporter=spec --test-timeout="${FV_TIMEOUT:-120000}" "${files[@]}" 2>&1 \
+      | grep -E '✖|ℹ (tests|pass|fail)'
+    rc=${PIPESTATUS[0]}
+  fi
+  [ "$rc" = 124 ] && echo "TIMED OUT after ${wall}s — a test or a hook is hanging, see FV_EXCLUDE"
+  return 0
+}
 if [ "${3:-}" = "baseline" ]; then echo "--- baseline (pristine upstream) ---"; run; fi
 for d in lib views locales assets components layouts scripts styles helpers index.js; do
   [ -e "$F/$d" ] && { rm -rf "packages/$PKG/$d"; cp -r "$F/$d" "packages/$PKG/"; }
