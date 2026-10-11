@@ -127,4 +127,4 @@ if [ -s /tmp/fork-verify-tsc.$$ ]; then echo "$(wc -l < /tmp/fork-verify-tsc.$$)
 rm -f /tmp/fork-verify-tsc.$$
 echo "--- eslint ---"; npx eslint "packages/$PKG" --ignore-pattern '**/test/**' >/dev/null && echo ok \
   || npx eslint "packages/$PKG" --ignore-pattern '**/test/**' --quiet 2>&1 | head -20
-echo "--- prettier ---"; npx prettier --check "packages/$PKG/**/*.{js,json}" 2>&1 | tail -1
+echo "--- prettier ---"; npx prettier --check "packages/$PKG/**/*.{js,json}" 2>&1 | grep -v '^Checking formatting'
