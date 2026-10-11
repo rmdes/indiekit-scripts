@@ -14,6 +14,9 @@
 #   upstream's tests in a fork buys nothing and rots: the copy wins, and tests
 #   upstream adds later never run.
 #
+#   Run ONE AT A TIME. Every invocation overlays the same indiekit-origin tree,
+#   so two concurrent runs corrupt each other's package and each other's restore.
+#
 # Env: WORKSPACE (default ~/indiekit), UPSTREAM (default $WORKSPACE/indiekit-origin)
 set -uo pipefail
 WORKSPACE=${WORKSPACE:-$HOME/indiekit}
@@ -30,11 +33,26 @@ export NODE_ENV=test SECRET=test PASSWORD_SECRET=test
   echo "ERROR: $U has no workspace install — @indiekit-test/* are not linked."
   echo "       Run: (cd $U && npm ci)   # ci, not install: package-lock.json is tracked here"
   exit 1; }
-node -e 'process.exit(typeof require("node:crypto").randomUUIDv7 === "function" ? 0 : 1)' || {
-  echo "ERROR: this Node ($(node -v)) has no crypto.randomUUIDv7, which upstream's"
-  echo "       util/endpoint-media/endpoint-micropub import. Upstream pins $(cat .nvmrc 2>/dev/null || echo '24.17')."
-  echo "       Run: nvm install $(cat .nvmrc 2>/dev/null || echo '24.17') && nvm use $(cat .nvmrc 2>/dev/null || echo '24.17')"
+# Upstream's util/endpoint-media/endpoint-micropub import crypto.randomUUIDv7,
+# which landed in 24.17 (upstream's .nvmrc) — 22, 23, 24.8, 24.13 and 25.5 all
+# lack it, and without it upstream's own code fails to PARSE, so every suite
+# dies on a SyntaxError that names none of this. Rather than make the caller
+# manage PATH (Homebrew's node shadows nvm's here, and it owns the cloudron
+# CLI so it cannot simply be removed), find the pinned runtime and use it.
+has_uuidv7(){ "$1" -e 'process.exit(typeof require("node:crypto").randomUUIDv7==="function"?0:1)' 2>/dev/null; }
+if ! has_uuidv7 node; then
+  WANT=$(cat .nvmrc 2>/dev/null || echo 24.17)
+  for c in "$HOME/.nvm/versions/node/v$WANT"*/bin; do
+    [ -x "$c/node" ] && has_uuidv7 "$c/node" && { PATH="$c:$PATH"; export PATH; break; }
+  done
+fi
+has_uuidv7 node || {
+  echo "ERROR: no Node with crypto.randomUUIDv7, which upstream's util,"
+  echo "       endpoint-media and endpoint-micropub import. Active: $(node -v)."
+  echo "       Upstream pins $(cat .nvmrc 2>/dev/null || echo 24.17)."
+  echo "       Run: nvm install $(cat .nvmrc 2>/dev/null || echo 24.17)"
   exit 1; }
+echo "node: $(node -v)"
 LINKED=()
 restore(){
   git checkout -q -- "packages/$PKG"; git clean -qfd "packages/$PKG"
