@@ -12,10 +12,15 @@
 #   1. PREFLIGHT  — npm credential (only needed to create trust configs) and gh.
 #   2. PLAN       — ask the registry what exists, refuse dirty/unpushed trees and
 #                   repos without publish.yml. Prints the plan before anything ships.
-#   3. TRUST      — `npm trust github`, ONLY for packages with no version yet
-#                   published via trusted publishing (the registry records that
-#                   in _npmUser.trustedPublisher, and a validated config never
-#                   expires). So a package costs one passkey approval on its first
+#   3. TRUST      — `npm trust github`, ONLY for packages that have neither
+#                   published a version via trusted publishing (the registry
+#                   records that in _npmUser.trustedPublisher, and a validated
+#                   config never expires) NOR a matching config already listed
+#                   by `npm trust list`. The second check matters because a
+#                   FAILED first CI publish leaves a config behind that no
+#                   published version points at, so without it every retry
+#                   costs another passkey approval and answers 409 Conflict.
+#                   So a package costs one passkey approval on its first
 #                   CI release and none after; several first-timers share one
 #                   approval if you tick "skip 2FA for 5 minutes". Done here, not
 #                   in setup, because a new config expires unused after 2 days.
@@ -91,6 +96,30 @@ run_for_tag() {    # slug tag jq -> field of the newest publish.yml run for that
 }
 origin_slug() {    # repo dir -> owner/repo
   git -C "$1" remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##'
+}
+
+# Does a usable trust config already exist? `npm trust list` is read-only and
+# costs no passkey, unlike `npm trust github`.
+#
+# A config can exist while no version has yet been published through it, so the
+# registry's _npmUser.trustedPublisher does not see it. That is exactly what a
+# FAILED first CI publish leaves behind: endpoint-syndicate beta.47 created the
+# config, then CI died in `npm test`, and every retry re-created it — one
+# passkey approval each time, answered with 409 Conflict.
+#
+# Match on BOTH file and repository: a config pointing at another workflow or
+# another repo would not authorise this publish. Several configs may be listed,
+# so reset per `type:` block. Note `npm trust list` exits 0 and prints
+# "No trust configurations found" when there are none — the output is the
+# signal, not the status.
+trust_config_exists() {    # pkg slug -> 0 if a matching config is already there
+  timeout 60 npm trust list "$1" 2>/dev/null | awk -v want_repo="$2" '
+    /^type:/       { f=""; r="" }
+    /^file:/       { f=$2 }
+    /^repository:/ { r=$2 }
+    f == "publish.yml" && r == want_repo { ok=1 }
+    END { exit ok ? 0 : 1 }
+  '
 }
 
 # ─── Phase 1: preflight ───
@@ -197,8 +226,11 @@ for repo in "${repos[@]}"; do
     skipped=$((skipped + 1)); continue
   fi
 
-  plan+=("$pkg|$version|$repo|$(origin_slug "$repo")|publish")
-  [ "$trusted" = true ] || needs_trust+=("$pkg")
+  slug=$(origin_slug "$repo")
+  plan+=("$pkg|$version|$repo|$slug|publish")
+  if [ "$trusted" != true ] && ! trust_config_exists "$pkg" "$slug"; then
+    needs_trust+=("$pkg")
+  fi
 done
 
 echo
